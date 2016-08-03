@@ -351,7 +351,120 @@ static int cjson_decode(lua_State* L) {
     return results;
 }
 
+static int json_gen_free(lua_State* L) {
+    yajl_gen g = (yajl_gen)luaL_checkudata(L,1,"json_gen");
+    yajl_gen_free(g);
+    return 0;
+}
+
+
+static int json_gen_new(lua_State* L) {
+    lua_pushlightuserdata(L,yajl_gen_alloc(0));
+    luaL_getmetatable(L,"json_gen");
+    lua_setmetatable(L,-2);
+    return 1;
+}
+
+static int json_gen_map_open(lua_State* L) {
+    yajl_gen g = (yajl_gen)luaL_checkudata(L,1,"json_gen");
+    yajl_gen_status status = yajl_gen_map_open(g);
+    if (status!=yajl_gen_status_ok) {
+       luaL_error(L,"json gen map open failed: %d",status);
+    }
+    return 0;
+}
+
+static int json_gen_map_close(lua_State* L) {
+    yajl_gen g = (yajl_gen)luaL_checkudata(L,1,"json_gen");
+    yajl_gen_status status = yajl_gen_map_close(g);
+    if (status!=yajl_gen_status_ok) {
+       luaL_error(L,"json gen map close failed: %d",status);
+    }
+    return 0;
+}
+
+static int json_gen_array_open(lua_State* L) {
+    yajl_gen g = (yajl_gen)luaL_checkudata(L,1,"json_gen");
+    yajl_gen_status status = yajl_gen_array_open(g);
+    if (status!=yajl_gen_status_ok) {
+       luaL_error(L,"json gen array open failed: %d",status);
+    }
+    return 0;
+}
+
+static int json_gen_array_close(lua_State* L) {
+    yajl_gen g = (yajl_gen)luaL_checkudata(L,1,"json_gen");
+    yajl_gen_status status = yajl_gen_array_close(g);
+    if (status!=yajl_gen_status_ok) {
+        luaL_error(L,"json gen array close failed: %d",status);
+    }
+    return 0;
+}
+
+static int json_gen_string(lua_State* L) {
+    yajl_gen g = (yajl_gen)luaL_checkudata(L,1,"json_gen");
+    size_t size = 0;
+    const char* name = luaL_checklstring(L,2,&size);
+    yajl_gen_status status = yajl_gen_string(g, reinterpret_cast<const unsigned char*>(name), size);
+    if (status!=yajl_gen_status_ok) {
+        luaL_error(L,"json gen string failed: %d",status);
+    }
+    return 0;
+}
+
+static int json_gen_null(lua_State* L) {
+    yajl_gen g = (yajl_gen)luaL_checkudata(L,1,"json_gen");
+    yajl_gen_status status = yajl_gen_null(g);
+    if (status!=yajl_gen_status_ok) {
+        luaL_error(L,"json gen null failed: %d",status);
+    }
+    return 0;
+}
+
+static int json_gen_bool(lua_State* L) {
+    yajl_gen g = (yajl_gen)luaL_checkudata(L,1,"json_gen");
+    int n = lua_toboolean(L,2);
+    yajl_gen_status status = yajl_gen_bool(g, n);
+    if (status!=yajl_gen_status_ok) {
+        luaL_error(L,"json gen bool failed: %d",status);
+    }
+    return 0;
+}
+
+static int json_gen_integer(lua_State* L) {
+    yajl_gen g = (yajl_gen)luaL_checkudata(L,1,"json_gen");
+    lua_Integer n = luaL_checkinteger(L,2);
+    yajl_gen_status status = yajl_gen_integer(g, n);
+    if (status!=yajl_gen_status_ok) {
+        luaL_error(L,"json gen integer failed: %d",status);
+    }
+    return 0;
+}
+
+static int json_gen_double(lua_State* L) {
+    yajl_gen g = (yajl_gen)luaL_checkudata(L,1,"json_gen");
+    lua_Number n = luaL_checknumber (L,2);
+    yajl_gen_status status = yajl_gen_double(g, n);
+    if (status!=yajl_gen_status_ok) {
+        luaL_error(L,"json gen double failed: %d",status);
+    }
+    return 0;
+}
+
+static int json_gen_get_buffer(lua_State* L) {
+    yajl_gen g = (yajl_gen)luaL_checkudata(L,1,"json_gen");
+    const unsigned char * buf = 0;
+    size_t len = 0;
+    yajl_gen_status status = yajl_gen_get_buf(g,&buf,&len);
+    if (status == yajl_gen_generation_complete || status == yajl_gen_status_ok) {
+        lua_pushlstring(L,reinterpret_cast<const char*>(buf),len);
+        return 1;
+    }
+    return luaL_error(L,"json gen failed: %d",status);
+}
+
 int luaopen_cjson(lua_State* L) {
+
     luaL_Reg reg[] = {
         { "encode", cjson_encode },
         { "decode", cjson_decode },
@@ -360,6 +473,27 @@ int luaopen_cjson(lua_State* L) {
     /* cjson module table */
     lua_newtable(L);
     luaL_setfuncs(L, reg, 0);
+
+    luaL_newmetatable(L,"json_gen");
+    luaL_Reg gen[] = {
+        { "new", json_gen_new },
+        { "free", json_gen_free },
+        { "map_open",   json_gen_map_open },
+        { "map_close",   json_gen_map_close },
+        { "array_open",   json_gen_array_open },
+        { "array_close",   json_gen_array_close },
+        { "null",       json_gen_null },
+        { "bool",       json_gen_bool },
+        { "string",     json_gen_string },
+        { "double",     json_gen_double },
+        { "integer",    json_gen_integer },
+        { "get_buffer", json_gen_get_buffer},
+        { NULL, NULL }
+    };
+    luaL_setfuncs(L, gen, 0);
+    lua_pushvalue(L,-1);
+    lua_setfield(L,-2,"__index");
+    lua_setfield(L,-2,"gen");
     return 1;
 }
 
