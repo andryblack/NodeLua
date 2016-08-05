@@ -3,9 +3,7 @@
 
 #include <map>
 #include <string>
-#include <node.h>
-#include <node_object_wrap.h>
-#include <uv.h>
+
 #include <nan.h>
 
 //using namespace v8;
@@ -18,17 +16,24 @@ extern "C"{
 #include <lualib.h>
 }
 
-class LuaState : public node::ObjectWrap{
+class LuaState : public Nan::ObjectWrap{
  public:
   lua_State* lua_;
   std::string name_;
   
-  static void Init(v8::Handle<v8::Object> target);
+  static void Init(v8::Local<v8::Object> exports);
+ 
   static int CallFunction(lua_State* L);
-
  private:
   LuaState();
   ~LuaState();
+  void close_state();
+
+  static Nan::Persistent<v8::Function> constructor;
+
+  typedef std::map<std::string, 
+    Nan::Callback* > functions_map_t;
+  functions_map_t functions;
 
   static NAN_METHOD(New);
   static NAN_METHOD(Close);

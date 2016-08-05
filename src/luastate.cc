@@ -2,6 +2,7 @@
 #include "luastate.h"
 #include <string.h>
 #include <vector>
+#include <iostream>
 
 #if LUA_VERSION_NUM >= 502
 static lua_State* lua_open() {
@@ -9,60 +10,63 @@ static lua_State* lua_open() {
 }
 #endif
 
+Nan::Persistent<v8::Function> LuaState::constructor;
+
 int luaopen_cjson(lua_State* L);
 int luaopen_cjson_safe(lua_State* L);
 
-/// @todo : move to state
-typedef std::map<std::string, 
-  Nan::Callback* > functions_map_t;
-functions_map_t functions;
 
 
-LuaState::LuaState(){
+
+LuaState::LuaState() : lua_(0) {
+  std::cout << "LuaState::LuaState" << std::endl;
 }
 LuaState::~LuaState(){
+  std::cout << "LuaState::~LuaState" << std::endl;
+  close_state();
+}
+
+void LuaState::close_state() {
+  if (lua_) {
+    lua_close(lua_);
+    lua_ = 0;
+  }
+  for (functions_map_t::iterator it = functions.begin();it!=functions.end();++it) {
+    delete it->second;
+  }
+  functions.clear();
 }
 
 
-void LuaState::Init(v8::Handle<v8::Object> target){
+void LuaState::Init(v8::Local<v8::Object> exports) {
+  Nan::HandleScope scope;
   v8::Local<v8::FunctionTemplate> tpl = Nan::New<v8::FunctionTemplate>(New);
   tpl->SetClassName(Nan::New("LuaState").ToLocalChecked());
   tpl->InstanceTemplate()->SetInternalFieldCount(2);
 
-  tpl->PrototypeTemplate()->Set(Nan::New("doFileSync").ToLocalChecked(),
-				Nan::New<v8::FunctionTemplate>(DoFileSync)->GetFunction());
+  
+  Nan::SetPrototypeMethod(tpl,"doFileSync",DoFileSync);
+  Nan::SetPrototypeMethod(tpl,"doStringSync",DoStringSync);
+  Nan::SetPrototypeMethod(tpl,"setGlobal",SetGlobal);
+  Nan::SetPrototypeMethod(tpl,"getGlobal",GetGlobal);
+  Nan::SetPrototypeMethod(tpl,"callGlobalSync",CallGlobalSync);
+  Nan::SetPrototypeMethod(tpl,"collectGarbageSync",CollectGarbageSync);
+  Nan::SetPrototypeMethod(tpl,"close",Close);
+  Nan::SetPrototypeMethod(tpl,"getName",GetName);
+  Nan::SetPrototypeMethod(tpl,"registerFunction",RegisterFunction);
 
-  tpl->PrototypeTemplate()->Set(Nan::New("doStringSync").ToLocalChecked(),
-				Nan::New<v8::FunctionTemplate>(DoStringSync)->GetFunction());
-
-  tpl->PrototypeTemplate()->Set(Nan::New("setGlobal").ToLocalChecked(),
-				Nan::New<v8::FunctionTemplate>(SetGlobal)->GetFunction());
-  tpl->PrototypeTemplate()->Set(Nan::New("getGlobal").ToLocalChecked(),
-				Nan::New<v8::FunctionTemplate>(GetGlobal)->GetFunction());
-
-  tpl->PrototypeTemplate()->Set(Nan::New("callGlobalSync").ToLocalChecked(),
-        Nan::New<v8::FunctionTemplate>(CallGlobalSync)->GetFunction());
-
-  tpl->PrototypeTemplate()->Set(Nan::New("collectGarbageSync").ToLocalChecked(),
-				Nan::New<v8::FunctionTemplate>(CollectGarbageSync)->GetFunction());
-
-  tpl->PrototypeTemplate()->Set(Nan::New("close").ToLocalChecked(),
-				Nan::New<v8::FunctionTemplate>(Close)->GetFunction());
-  tpl->PrototypeTemplate()->Set(Nan::New("getName").ToLocalChecked(),
-				Nan::New<v8::FunctionTemplate>(GetName)->GetFunction());
-
-  tpl->PrototypeTemplate()->Set(Nan::New("registerFunction").ToLocalChecked(),
-				Nan::New<v8::FunctionTemplate>(RegisterFunction)->GetFunction());
-
-  target->Set(Nan::New("LuaState").ToLocalChecked(), tpl->GetFunction());
+  constructor.Reset(tpl->GetFunction());
+  exports->Set(Nan::New("LuaState").ToLocalChecked(), tpl->GetFunction());
 }
+
+ 
 
 
 int LuaState::CallFunction(lua_State* L){
   int n = lua_gettop(L);
   lua_stack_check check(L,1);
 
-  const char * func_name = lua_tostring(L, lua_upvalueindex(1));
+  Nan::Callback* func = (Nan::Callback*)lua_touserdata(L, lua_upvalueindex(1));
 
   const unsigned argc = n;
   v8::Local<v8::Value>* argv = new v8::Local<v8::Value>[argc];
@@ -73,14 +77,7 @@ int LuaState::CallFunction(lua_State* L){
 
   v8::Handle<v8::Value> ret_val = Nan::Undefined();
 
-  functions_map_t::iterator iter;
-  for(iter = functions.begin(); iter != functions.end(); iter++){
-    if(strcmp(iter->first.c_str(), func_name) == 0){
-      Nan::Callback* func = iter->second;
-      ret_val = func->Call(Nan::GetCurrentContext()->Global(), argc, argv);
-      break;
-    }
-  }
+  ret_val = func->Call(Nan::GetCurrentContext()->Global(), argc, argv);
 
   delete [] argv;
 
@@ -90,6 +87,7 @@ int LuaState::CallFunction(lua_State* L){
 
 
 NAN_METHOD(LuaState::New){
+
   Nan::HandleScope scope;
 
   if(!info.IsConstructCall()) {
@@ -151,6 +149,10 @@ NAN_METHOD(LuaState::DoFileSync){
   std::string file_name = get_str(info[0]);
 
   LuaState* obj = ObjectWrap::Unwrap<LuaState>(info.This());
+  if(!obj->lua_){
+    Nan::ThrowError("LuaState.doFileSync call on closed state");
+    return;
+  }
   int top = lua_gettop(obj->lua_);
   lua_stack_check check(obj->lua_,0);
 
@@ -182,6 +184,10 @@ NAN_METHOD(LuaState::DoStringSync) {
   std::string lua_code = get_str(info[0]);
 
   LuaState* obj = ObjectWrap::Unwrap<LuaState>(info.This());
+  if(!obj->lua_){
+    Nan::ThrowError("LuaState.doStringSync call on closed state");
+    return;
+  }
   int top = lua_gettop(obj->lua_);
   lua_stack_check check(obj->lua_,0);
 
@@ -218,6 +224,10 @@ NAN_METHOD(LuaState::SetGlobal) {
   std::string global_name = get_str(info[0]);
 
   LuaState* obj = ObjectWrap::Unwrap<LuaState>(info.This());
+  if(!obj->lua_){
+    Nan::ThrowError("LuaState.setGlobal call on closed state");
+    return;
+  }
   lua_stack_check check(obj->lua_,0);
   push_value_to_lua(obj->lua_, info[1]);
   lua_setglobal(obj->lua_, global_name.c_str());
@@ -237,6 +247,10 @@ NAN_METHOD(LuaState::GetGlobal) {
   std::string global_name = get_str(info[0]);
 
   LuaState* obj = ObjectWrap::Unwrap<LuaState>(info.This());
+  if(!obj->lua_){
+    Nan::ThrowError("LuaState.GetGlobal call on closed state");
+    return;
+  }
   lua_stack_check check(obj->lua_,0);
 
   lua_getglobal(obj->lua_, global_name.c_str());
@@ -262,6 +276,10 @@ NAN_METHOD(LuaState::CallGlobalSync) {
   std::string global_name = get_str(info[0]);
 
   LuaState* obj = ObjectWrap::Unwrap<LuaState>(info.This());
+  if(!obj->lua_){
+    Nan::ThrowError("LuaState.callGlobalSync call on closed state");
+    return;
+  }
   lua_stack_check check(obj->lua_,0);
 
   lua_getglobal(obj->lua_, global_name.c_str());
@@ -304,7 +322,7 @@ NAN_METHOD(LuaState::CallGlobalSync) {
 
 NAN_METHOD(LuaState::Close){
   LuaState* obj = ObjectWrap::Unwrap<LuaState>(info.This());
-  lua_close(obj->lua_);
+  obj->close_state();
 }
 
 
@@ -323,6 +341,11 @@ NAN_METHOD(LuaState::CollectGarbageSync){
   }
 
   LuaState* obj = ObjectWrap::Unwrap<LuaState>(info.This());
+
+  if(!obj->lua_){
+    Nan::ThrowError("LuaState.collectGarbageSync call on closed state");
+    return;
+  }
 
   int type = (int)info[0]->ToNumber()->Value();
   int gc = lua_gc(obj->lua_, type, 0);
@@ -349,16 +372,23 @@ NAN_METHOD(LuaState::RegisterFunction){
   }
 
   LuaState* obj = ObjectWrap::Unwrap<LuaState>(info.This());
+  if(!obj->lua_){
+    Nan::ThrowError("LuaState.registerFunction call on closed state");
+    return;
+  }
   lua_stack_check check(obj->lua_,0);
 
   v8::Local<v8::Function> func = v8::Local<v8::Function>::Cast(info[1]);
   std::string func_name = get_str(info[0]);
-  v8::Local<v8::String> func_key = v8::String::Concat(Nan::New(func_name.c_str()).ToLocalChecked(),
-    Nan::New(":").ToLocalChecked());
-  func_key = v8::String::Concat(func_key, Nan::New(obj->name_.c_str()).ToLocalChecked());
-  functions.insert(std::make_pair(get_str(func_key), new Nan::Callback(func) ));
+  functions_map_t::iterator it = obj->functions.find(func_name);
+  if (it!=obj->functions.end()) {
+     Nan::ThrowError("nodelua.registerFunction function already registered");
+     return;
+  }
+  Nan::Callback* cb = new Nan::Callback(func);
+  obj->functions.insert(std::make_pair(func_name, cb  ));
 
-  lua_pushstring(obj->lua_, get_str(func_key).c_str());
+  lua_pushlightuserdata(obj->lua_, cb);
   lua_pushcclosure(obj->lua_, CallFunction, 1);
   lua_setglobal(obj->lua_, func_name.c_str());
 
