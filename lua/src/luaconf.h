@@ -18,6 +18,8 @@
 ** ===================================================================
 */
 
+#define LUA_ANSI
+#define getlocaledecpoint() ('.')
 
 /*
 @@ LUA_ANSI controls the use of non-ansi features.
